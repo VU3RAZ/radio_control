@@ -1,0 +1,5 @@
+pyserial>=3.5
+sounddevice>=0.4.6
+numpy>=1.24
+PyQt5>=5.15
+pyqtgraph>=0.13
