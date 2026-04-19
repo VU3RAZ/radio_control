@@ -32,18 +32,21 @@ def find_serial_port() -> Optional[CIVController]:
     for port_info in ports:
         device = port_info.device
         for baud in BAUD_RATES:
+            opened = False
             for addr in _PROBE_ADDRS:
                 ctrl = CIVController(device, baud, addr)
                 if not ctrl.connect():
-                    break  # port is not openable at this baud – skip remaining bauds
-                try:
-                    freq = ctrl.read_frequency()
-                    if freq is not None:
-                        print(f"[detector] Found {ctrl.model} on {device} "
-                              f"at {baud} baud (addr 0x{addr:02X})")
-                        return ctrl
-                finally:
-                    ctrl.disconnect()
+                    break           # port not openable at this baud
+                opened = True
+                freq = ctrl.read_frequency()
+                if freq is not None:
+                    print(f"[detector] Found {ctrl.model} on {device} "
+                          f"at {baud} baud (addr 0x{addr:02X})")
+                    return ctrl     # return CONNECTED controller
+                ctrl.disconnect()   # wrong address – try next
+
+            if not opened:
+                break               # port refused open entirely – skip other bauds
 
     return None
 

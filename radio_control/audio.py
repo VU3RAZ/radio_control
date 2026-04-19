@@ -72,13 +72,14 @@ class AudioWorker(QThread):
         self._buf[-n:] = indata[:n]
 
         if self.is_iq:
-            # Combine channels as complex I+jQ
+            # Combine channels as complex I+jQ, remove DC offset before FFT
             sig = (self._buf[:, 0] + 1j * self._buf[:, 1]).astype(np.complex64)
+            sig -= sig.mean()   # kills the centre-frequency carrier spike
             windowed = sig * self._window
             spectrum  = np.fft.fftshift(np.abs(np.fft.fft(windowed)))
             spectrum /= self._win_norm
         else:
-            sig = self._buf[:, 0]
+            sig = self._buf[:, 0] - self._buf[:, 0].mean()   # remove DC
             windowed = sig * self._window
             # rfft gives positive frequencies only (fft_size//2 + 1 bins)
             spectrum = np.abs(np.fft.rfft(windowed))

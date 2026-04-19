@@ -36,7 +36,7 @@ from PyQt5.QtWidgets import (
 
 from .civ import (
     CIVController, CIVWorker,
-    LVL_RF_GAIN, LVL_SQL, LVL_NR, LVL_NB, LVL_DRIVE,
+    LVL_AF, LVL_RF_GAIN, LVL_SQL, LVL_NR, LVL_NB, LVL_DRIVE, LVL_MIC,
     FUNC_NR, FUNC_NB, FUNC_COMP, FUNC_VOX,
 )
 from .audio import AudioWorker
@@ -393,10 +393,10 @@ class MainWindow(QMainWindow):
         vbox.addWidget(self._lbl_radio)
 
         # Connect VFO/swap/copy buttons
-        self._btn_vfoa.clicked.connect(lambda: self._civ_send(lambda: self.radio.set_vfo("A")))
-        self._btn_vfob.clicked.connect(lambda: self._civ_send(lambda: self.radio.set_vfo("B")))
-        btn_swap.clicked.connect(lambda: self._civ_send(lambda: self.radio.swap_vfo()))
-        btn_copy.clicked.connect(lambda: self._civ_send(lambda: self.radio.copy_vfo_a_to_b()))
+        self._btn_vfoa.clicked.connect(lambda: self._civ and self._civ.send_set_vfo("A"))
+        self._btn_vfob.clicked.connect(lambda: self._civ and self._civ.send_set_vfo("B"))
+        btn_swap.clicked.connect(lambda: self._civ and self._civ.send_swap_vfo())
+        btn_copy.clicked.connect(lambda: self._civ and self._civ.send_copy_vfo())
         self._step_combo.currentIndexChanged.connect(self._on_step_change)
 
         return p
@@ -454,22 +454,26 @@ class MainWindow(QMainWindow):
         hbox.setContentsMargins(6, 4, 6, 4)
         hbox.setSpacing(8)
 
+        self._sl_af     = LevelControl("AF VOL",  200)
         self._sl_rfgain = LevelControl("RF GAIN", 200)
         self._sl_sql    = LevelControl("SQL",       0)
         self._sl_nr     = LevelControl("NR LVL",  128)
         self._sl_nb     = LevelControl("NB LVL",  128)
         self._sl_drive  = LevelControl("DRIVE",   200)
+        self._sl_mic    = LevelControl("MIC",     128)
 
         for widget, sub in [
+            (self._sl_af,     LVL_AF),
             (self._sl_rfgain, LVL_RF_GAIN),
             (self._sl_sql,    LVL_SQL),
             (self._sl_nr,     LVL_NR),
             (self._sl_nb,     LVL_NB),
             (self._sl_drive,  LVL_DRIVE),
+            (self._sl_mic,    LVL_MIC),
         ]:
             hbox.addWidget(widget, stretch=1)
             s = sub
-            widget.value_changed.connect(lambda v, sc=s: self._civ_send(lambda val=v, c=sc: self.radio.set_level(c, val)))
+            widget.value_changed.connect(lambda v, sc=s: self._civ and self._civ.send_set_level(sc, v))
 
         return p
 
@@ -484,14 +488,14 @@ class MainWindow(QMainWindow):
         # AGC exclusive group
         agc_grp, self._agc_btns = _exclusive_group(
             hbox, "AGC", AGC_LIST,
-            lambda v: self._civ_send(lambda val=v: self.radio.set_agc(val))
+            lambda v: self._civ and self._civ.send_set_agc(v)
         )
         hbox.addWidget(agc_grp)
 
         # Pre-amp exclusive group
         pre_grp, self._pre_btns = _exclusive_group(
             hbox, "Pre", PRE_LIST,
-            lambda v: self._civ_send(lambda val=v: self.radio.set_preamp(val))
+            lambda v: self._civ and self._civ.send_set_preamp(v)
         )
         self._pre_btns[0].setChecked(True)
         hbox.addWidget(pre_grp)
@@ -499,7 +503,7 @@ class MainWindow(QMainWindow):
         # ATT exclusive group
         att_grp, self._att_btns = _exclusive_group(
             hbox, "ATT", ATT_LIST,
-            lambda v: self._civ_send(lambda val=v: self.radio.set_att(val))
+            lambda v: self._civ and self._civ.send_set_att(v)
         )
         self._att_btns[0].setChecked(True)
         hbox.addWidget(att_grp)
@@ -519,20 +523,20 @@ class MainWindow(QMainWindow):
         # Split
         self._btn_split = _btn("SPLIT", checkable=True)
         self._btn_split.clicked.connect(
-            lambda checked: self._civ_send(lambda c=checked: self.radio.set_split(c))
+            lambda checked: self._civ and self._civ.send_set_split(checked)
         )
         hbox.addWidget(self._btn_split)
 
         # PTT
         self._btn_ptt = _btn("TX", checkable=True, obj="ptt")
         self._btn_ptt.clicked.connect(
-            lambda checked: self._civ_send(lambda c=checked: self.radio.set_tx(c))
+            lambda checked: self._civ and self._civ.send_set_tx(checked)
         )
         hbox.addWidget(self._btn_ptt)
 
         # Tune
         btn_tune = _btn("TUNE", obj="tune")
-        btn_tune.clicked.connect(lambda: self._civ_send(lambda: self.radio.start_tune()))
+        btn_tune.clicked.connect(lambda: self._civ and self._civ.send_start_tune())
         hbox.addWidget(btn_tune)
 
         hbox.addStretch()
@@ -565,9 +569,7 @@ class MainWindow(QMainWindow):
     def _toggle_btn(self, label: str, sub_cmd: int) -> QPushButton:
         b = _btn(label, checkable=True)
         sc = sub_cmd
-        b.clicked.connect(
-            lambda checked, s=sc: self._civ_send(lambda c=checked, sub=s: self.radio.set_function(sub, c))
-        )
+        b.clicked.connect(lambda checked, s=sc: self._civ and self._civ.send_set_function(s, checked))
         return b
 
     # ── spectrum + waterfall ──────────────────────────────────────────────────
@@ -633,14 +635,13 @@ class MainWindow(QMainWindow):
         self._civ.agc_updated.connect(self._on_agc)
         self._civ.att_updated.connect(self._on_att)
         self._civ.preamp_updated.connect(self._on_preamp)
+        self._civ.split_updated.connect(self._on_split)
+        self._civ.tx_updated.connect(self._on_tx)
+        self._civ.status_msg.connect(self._status.showMessage)
         self._civ.start()
         self._lbl_radio.setText(
             f"Radio: {self.radio.model}  ·  {self.radio.port}  ·  {self.radio.baud_rate} baud"
         )
-
-    def _civ_send(self, fn):
-        if self._civ:
-            self._civ.send(fn)
 
     # ═════════════════════════════════════════════ CI-V slots ════════════════
 
@@ -665,11 +666,13 @@ class MainWindow(QMainWindow):
     @pyqtSlot(int, int)
     def _on_level(self, sub_cmd: int, value: int):
         mapping = {
+            LVL_AF:      self._sl_af,
             LVL_RF_GAIN: self._sl_rfgain,
             LVL_SQL:     self._sl_sql,
             LVL_NR:      self._sl_nr,
             LVL_NB:      self._sl_nb,
             LVL_DRIVE:   self._sl_drive,
+            LVL_MIC:     self._sl_mic,
         }
         if sub_cmd in mapping:
             mapping[sub_cmd].set_value_quiet(value)
@@ -701,25 +704,39 @@ class MainWindow(QMainWindow):
         for i, (_, v) in enumerate(PRE_LIST):
             self._pre_btns[i].setChecked(v == value)
 
+    @pyqtSlot(bool)
+    def _on_split(self, on: bool):
+        self._btn_split.blockSignals(True)
+        self._btn_split.setChecked(on)
+        self._btn_split.blockSignals(False)
+
+    @pyqtSlot(bool)
+    def _on_tx(self, on: bool):
+        self._btn_ptt.blockSignals(True)
+        self._btn_ptt.setChecked(on)
+        self._btn_ptt.blockSignals(False)
+
     # ═════════════════════════════════════════════ user interactions ══════════
 
     def _set_freq(self, hz: int):
         """Tune to hz (optimistic: update display immediately, then send CI-V)."""
         self.vfo_hz = hz
         self._on_freq(hz)
-        self._civ_send(lambda f=hz: self.radio.set_frequency(f))
+        if self._civ:
+            self._civ.send_set_freq(hz)
 
     def _set_mode(self, mode_name: str):
-        filt = self._fil_btns.index(
-            next(b for b in self._fil_btns if b.isChecked()), 0
-        ) + 1
+        checked = next((b for b in self._fil_btns if b.isChecked()), self._fil_btns[0])
+        filt = self._fil_btns.index(checked) + 1
         self._lbl_mode.setText(mode_name)
-        self._civ_send(lambda m=mode_name, f=filt: self.radio.set_mode(m, f))
+        if self._civ:
+            self._civ.send_set_mode(mode_name, filt)
 
     def _set_filter(self, filt_num: int):
         mode = self._lbl_mode.text()
         self._lbl_filter.setText(f"FIL{filt_num}")
-        self._civ_send(lambda m=mode, f=filt_num: self.radio.set_mode(m, f))
+        if self._civ:
+            self._civ.send_set_mode(mode, filt_num)
 
     def _freq_click(self, event):
         if event.button() == Qt.LeftButton:

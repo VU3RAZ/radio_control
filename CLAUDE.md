@@ -33,34 +33,62 @@ sudo usermod -aG dialout $USER   # then log out / in
 ```
 main.py                     – CLI arg parsing, wires together radio + audio + UI
 radio_control/
-  civ.py                    – CI-V protocol: BCD encode/decode, CIVController class
+  civ.py                    – CI-V protocol: BCD encode/decode, CIVController (sync,
+                              used by detector) and CIVWorker (QThread, all runtime I/O)
   detector.py               – Auto-detect serial port (probes baud/address combos)
                               and USB audio device by name matching
   audio.py  (AudioWorker)   – QThread wrapping sounddevice.InputStream; emits
                               fft_ready(np.ndarray) at ~20 Hz
-  ui.py     (MainWindow)    – PyQt5 window: spectrum PlotWidget + waterfall
-                              ImageItem; polls radio via QTimer every 200 ms
+  ui.py     (MainWindow)    – PyQt5 window: IC-7300 style front panel, spectrum
+                              PlotWidget + waterfall ImageItem
 ```
 
 ### Data flow
 
 ```
-sounddevice callback → ring buffer → FFT → fft_ready signal (Qt queued)
-                                                 ↓
-                                      MainWindow._on_fft()
-                                         ├── spectrum PlotCurveItem.setData()
-                                         └── waterfall buffer roll + ImageItem.setImage()
+sounddevice callback → ring buffer → DC removal → FFT → fft_ready signal (Qt queued)
+                                                              ↓
+                                                   MainWindow._on_fft()
+                                                      ├── spectrum PlotCurveItem.setData()
+                                                      └── waterfall buffer roll + ImageItem.setImage()
 
-QTimer (200 ms) → CIVController.read_frequency() → _lbl_freq + freq axis update
+CIVWorker (QThread)
+  ├── polls S-meter every 100 ms  → smeter_updated  → SMeterWidget.set_value()
+  ├── polls frequency every 100 ms → freq_updated   → _on_freq()  (also updates waterfall axis)
+  ├── rotates full-state poll      → level_updated / mode_updated / agc_updated / …
+  └── dispatches transceive broadcasts when radio hardware is changed
 ```
+
+### Bidirectional CI-V sync
+
+Every radio parameter has a signal (radio → GUI) and a send_set_*() method (GUI → radio):
+
+| Parameter | Signal | Send method | Notes |
+|---|---|---|---|
+| Frequency | `freq_updated(int)` | `send_set_freq(hz)` | Polled 10 Hz + transceive |
+| Mode / filter | `mode_updated(str, int)` | `send_set_mode(name, filt)` | Transceive + state poll |
+| S-meter | `smeter_updated(int)` | — | Polled 10 Hz only |
+| AF volume | `level_updated(LVL_AF, v)` | `send_set_level(LVL_AF, v)` | |
+| RF gain | `level_updated(LVL_RF_GAIN, v)` | `send_set_level(LVL_RF_GAIN, v)` | |
+| Squelch | `level_updated(LVL_SQL, v)` | `send_set_level(LVL_SQL, v)` | |
+| NR / NB level | `level_updated(LVL_NR/NB, v)` | `send_set_level(…)` | |
+| Drive / Mic | `level_updated(LVL_DRIVE/MIC, v)` | `send_set_level(…)` | |
+| AGC | `agc_updated(int)` | `send_set_agc(mode)` | 0=off 1=F 2=M 3=S |
+| ATT | `att_updated(int)` | `send_set_att(val)` | 0 or 20 dB |
+| Pre-amp | `preamp_updated(int)` | `send_set_preamp(val)` | 0/1/2 |
+| NR / NB / COMP / VOX | `function_updated(sub, bool)` | `send_set_function(sub, on)` | |
+| Split | `split_updated(bool)` | `send_set_split(on)` | |
+| TX / PTT | `tx_updated(bool)` | `send_set_tx(on)` | |
 
 ### CI-V protocol notes
 
 - **Frame**: `FE FE <dst> <src> <cmd> [data…] FD`
 - Controller address is always `0xE0`; radio echoes every frame on half-duplex buses
-- Frequency is 5-byte BCD, **LSB-first**, each byte `(hi_nibble << 4) | lo_nibble` where hi = more-significant digit of the pair
-- `civ.py::_encode_bcd_freq` / `_decode_bcd_freq` implement this exactly
-- Known radio addresses are in `KNOWN_RADIOS` dict (IC-7300 = 0x94, IC-705 = 0xA4, etc.)
+- Frequency is 5-byte BCD, **LSB-first**: each byte `(hi_nibble << 4) | lo_nibble` where hi = more-significant digit of the pair
+- Level values (0–255) are 4-digit BCD in 2 bytes LSB-first; `_encode_level` / `_decode_level` implement this
+- `_initial_sync()` queries all state at startup; full-state poll rotates one query per 100 ms for radios with transceive disabled
+- Known radio addresses in `KNOWN_RADIOS` dict (IC-7300 = 0x94, IC-705 = 0xA4, etc.)
+- **Detector**: `find_serial_port()` returns a **connected** `CIVController`; the `finally: disconnect()` anti-pattern must not be reintroduced
 
 ### Spectrum / waterfall tuning
 
@@ -72,11 +100,11 @@ Constants at the top of `ui.py`:
 | `WATERFALL_ROWS` | 300 | Time history depth |
 | `DB_FLOOR` | −120 dB | Bottom of colour scale |
 | `DB_CEIL` | −20 dB | Top of colour scale |
-| `CIV_POLL_MS` | 200 | Radio VFO poll interval |
 
 ### IQ vs mono audio
 
 - **Mono**: `rfft` → positive frequencies `0 … Fs/2`; x-axis = `VFO + [0, Fs/2]`
 - **IQ (stereo)**: left=I, right=Q → complex FFT shifted to `−Fs/2 … +Fs/2`; x-axis = `VFO + [−Fs/2, +Fs/2]`
+- DC offset is removed (`sig -= sig.mean()`) before windowing to suppress the centre-frequency carrier spike
 
 Modern Icom radios (IC-7300, IC-705, IC-7610) expose a stereo USB audio device where the pair is in-phase / quadrature; pass `--iq` or let auto-detection pick stereo.
