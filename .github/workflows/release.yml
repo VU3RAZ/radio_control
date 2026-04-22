@@ -1,0 +1,42 @@
+name: Build & Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt pyinstaller
+
+      - name: Build executable
+        run: >
+          pyinstaller
+          --onefile
+          --windowed
+          --name IcomRadioControl
+          --hidden-import PyQt5.sip
+          --hidden-import serial.tools.list_ports_windows
+          --collect-all sounddevice
+          --collect-all pyqtgraph
+          main.py
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/IcomRadioControl.exe
+          generate_release_notes: true
+          fail_on_unmatched_files: true
