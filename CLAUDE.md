@@ -103,8 +103,18 @@ Constants at the top of `ui.py`:
 
 ### IQ vs mono audio
 
-- **Mono**: `rfft` → positive frequencies `0 … Fs/2`; x-axis = `VFO + [0, Fs/2]`
+- **Mono (default)**: `rfft` → positive frequencies `0 … Fs/2`; x-axis = `VFO + [0, Fs/2]`
 - **IQ (stereo)**: left=I, right=Q → complex FFT shifted to `−Fs/2 … +Fs/2`; x-axis = `VFO + [−Fs/2, +Fs/2]`
 - DC offset is removed (`sig -= sig.mean()`) before windowing to suppress the centre-frequency carrier spike
 
-Modern Icom radios (IC-7300, IC-705, IC-7610) expose a stereo USB audio device where the pair is in-phase / quadrature; pass `--iq` or let auto-detection pick stereo.
+**Default is always mono.** The IC-7300 USB audio device is stereo but outputs regular AF audio
+by default (not IQ). IQ mode requires the radio to be explicitly configured for I/Q USB output
+AND the app to be launched with `--iq`. Never assume stereo device = IQ signal.
+
+To enable IQ: `python main.py --iq`
+
+### S-meter CI-V notes
+
+- Polled at 10 Hz via command `0x15` sub-command `0x02`
+- Scale: 0 = S0, 120 = S9, 241 = S9+60 dB
+- `_dispatch` handles both response formats: `[0x02, lo, hi]` (sub-command echoed) and `[lo, hi]` (sub-command omitted by some firmware)

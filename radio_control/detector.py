@@ -82,18 +82,16 @@ def find_audio_device(prefer_stereo: bool = True) -> Tuple[Optional[int], int, b
         candidates.sort(key=score, reverse=True)
         idx, dev = candidates[0]
         sr = int(dev["default_samplerate"])
-        is_iq = prefer_stereo and dev["max_input_channels"] >= 2
         print(f"[detector] Audio device [{idx}] '{dev['name']}' "
-              f"ch={dev['max_input_channels']} sr={sr} iq={is_iq}")
-        return idx, sr, is_iq
+              f"ch={dev['max_input_channels']} sr={sr}")
+        return idx, sr, False
 
     # Fallback: use default input device
     try:
         default_idx = sd.default.device[0]
         dev = sd.query_devices(default_idx)
         sr = int(dev["default_samplerate"])
-        is_iq = prefer_stereo and dev["max_input_channels"] >= 2
         print(f"[detector] Using default audio device [{default_idx}] '{dev['name']}'")
-        return default_idx, sr, is_iq
+        return default_idx, sr, False
     except Exception:
         return None, 48000, False

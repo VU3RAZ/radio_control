@@ -85,7 +85,7 @@ def main():
         dev   = args.audio
         devinfo = sd.query_devices(dev)
         sr    = args.rate or int(devinfo["default_samplerate"])
-        is_iq = args.iq or (devinfo["max_input_channels"] >= 2 and not args.mono)
+        is_iq = args.iq and not args.mono
     else:
         print("[main] Auto-detecting audio device…")
         dev, sr, is_iq = find_audio_device()

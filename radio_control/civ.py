@@ -457,9 +457,13 @@ class CIVWorker(QThread):
             self.att_updated.emit(20 if data[0] == 0x20 else 0)
 
         # ── S-meter (0x15, sub 0x02) ──────────────────────────────────────────
-        # len >= 2 because some firmware returns only 1 payload byte after sub-cmd
-        elif cmd == CMD_SMETER and len(data) >= 2 and data[0] == 0x02:
-            self.smeter_updated.emit(_decode_level(data[1:3]))
+        elif cmd == CMD_SMETER:
+            if len(data) >= 3 and data[0] == 0x02:
+                # Standard response: [sub=0x02, lo_bcd, hi_bcd]
+                self.smeter_updated.emit(_decode_level(data[1:3]))
+            elif len(data) >= 2 and data[0] != 0x02:
+                # Some firmware omits the sub-command: [lo_bcd, hi_bcd]
+                self.smeter_updated.emit(_decode_level(data[0:2]))
 
         # ── split (0x0F) ──────────────────────────────────────────────────────
         elif cmd == CMD_SPLIT and len(data) >= 1:
